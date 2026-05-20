@@ -54,6 +54,7 @@ try:
     print("DEBUG: Imported all agents")
     from utils import config
     from utils.paperviz_processor import PaperVizProcessor
+    from utils.pdf_ingest import extract_paper, refine_for_diagram
     print("DEBUG: Imported utils")
 
     model_config_data = {}
@@ -519,7 +520,122 @@ def main():
                 image_gen_model_name = image_model_selection
         
         st.divider()
-        
+
+        # ---------- PDF auto-ingest (optional) ----------
+        with st.expander("📄 Auto-fill from PDF (optional)", expanded=False):
+            st.caption(
+                "Upload a paper PDF. PaperBanana extracts the methods section + figure "
+                "legends and uses an LLM to refine them into diagram-ready inputs."
+            )
+            uploaded_pdf = st.file_uploader(
+                "Paper PDF",
+                type=["pdf"],
+                key="tab1_pdf_uploader",
+                help="The PDF must contain a text layer (scanned-image PDFs are not supported).",
+            )
+            if uploaded_pdf is not None:
+                import tempfile, hashlib
+                pdf_bytes = uploaded_pdf.getvalue()
+                pdf_hash = hashlib.sha1(pdf_bytes).hexdigest()[:12]
+                tmp_path = Path(tempfile.gettempdir()) / f"paperbanana_{pdf_hash}.pdf"
+                if not tmp_path.exists():
+                    tmp_path.write_bytes(pdf_bytes)
+
+                @st.cache_data(show_spinner=False)
+                def _cached_extract(_hash: str, path_str: str):
+                    return extract_paper(path_str)
+
+                try:
+                    paper = _cached_extract(pdf_hash, str(tmp_path))
+                except Exception as e:
+                    st.error(f"PDF extraction failed: {e}")
+                    paper = None
+
+                if paper is not None:
+                    figs_msg = (
+                        f"figures detected: {paper.available_figures()}"
+                        if paper.figure_legends
+                        else "no figure legends detected — will build a conceptual overview from the methods text"
+                    )
+                    st.success(
+                        f"**{paper.title[:100]}**  \n"
+                        f"sections: {list(paper.sections.keys())}  \n"
+                        f"{figs_msg}  \n"
+                        f"methods: {len(paper.methods):,} chars, full text: {len(paper.full_text):,} chars"
+                    )
+
+                    refine_mode = st.radio(
+                        "Refinement mode",
+                        [
+                            "Smart refine (LLM compresses to finding-centric markdown)",
+                            "Raw dump (full PDF text, no LLM — let PaperBanana decide)",
+                        ],
+                        index=0,
+                        key="tab1_pdf_refine_mode",
+                        help=(
+                            "Smart: ~10s extra LLM call, produces compact diagram-ready input. "
+                            "Raw: instant, pastes the entire PDF text — works as a fallback when "
+                            "the LLM compression misses something, but uses much more context."
+                        ),
+                    )
+
+                    if st.button("✨ Extract & Fill", key="tab1_pdf_extract_btn"):
+                        is_smart = refine_mode.startswith("Smart")
+                        if is_smart:
+                            with st.spinner("LLM is refining the paper for diagram input..."):
+                                try:
+                                    refined = asyncio.run(refine_for_diagram(
+                                        paper,
+                                        figure_num=None,
+                                        main_model_name=main_model_name,
+                                    ))
+                                except Exception as e:
+                                    st.error(f"LLM refinement failed: {e}")
+                                    refined = None
+
+                            if refined is not None:
+                                st.session_state["method_content"] = refined.method_markdown
+                                st.session_state["caption"] = refined.caption
+                                st.session_state["method_example_selector"] = "None"
+                                st.session_state["caption_example_selector"] = "None"
+                                target_msg = (
+                                    f"auto-picked Figure {refined.target_figure}"
+                                    if refined.target_figure is not None
+                                    else "no figure legend found — built overview from methods"
+                                )
+                                st.success(
+                                    f"Filled (Smart, {target_msg}, "
+                                    f"diagram_type={refined.diagram_type}, "
+                                    f"aspect_ratio={refined.aspect_ratio}). "
+                                    "Review the fields below before generating."
+                                )
+                                st.rerun()
+                        else:
+                            st.session_state["method_content"] = paper.full_text
+                            if paper.abstract:
+                                st.session_state["caption"] = paper.abstract
+                            elif paper.figure_legends:
+                                first = min(paper.figure_legends)
+                                st.session_state["caption"] = paper.figure_legends[first]
+                            else:
+                                st.session_state["caption"] = ""
+                            st.session_state["method_example_selector"] = "None"
+                            st.session_state["caption_example_selector"] = "None"
+                            cap_src = (
+                                "abstract" if paper.abstract
+                                else "first figure legend" if paper.figure_legends
+                                else "empty (please fill in)"
+                            )
+                            st.success(
+                                f"Filled (Raw dump: {len(paper.full_text):,} chars of method, "
+                                f"caption from {cap_src}). "
+                                "Review and trim the fields below before generating — the planner "
+                                "may struggle with very long unstructured input."
+                            )
+                            st.rerun()
+
+        st.divider()
+
         # Input section
         st.markdown("## 📝 Input")
         
