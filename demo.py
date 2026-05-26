@@ -387,6 +387,18 @@ def display_candidate_result(result, candidate_id, exp_mode):
                 key=f"download_candidate_{candidate_id}",
                 use_container_width=True
             )
+
+            # Action buttons: send this candidate to the Feedback Chat or Upscale tab
+            jpg_bytes = base64.b64decode(result[final_image_key])
+            act1, act2 = st.columns(2)
+            with act1:
+                if st.button("💬 피드백", key=f"feedback_candidate_{candidate_id}", use_container_width=True):
+                    st.session_state["chat_base_image"] = jpg_bytes
+                    st.toast("💬 'Feedback Chat' 탭으로 보냈습니다. 상단 탭을 클릭하세요.")
+            with act2:
+                if st.button("🔍 업스케일", key=f"upscale_candidate_{candidate_id}", use_container_width=True):
+                    st.session_state["upscale_source_image"] = jpg_bytes
+                    st.toast("🔍 'Upscale' 탭으로 보냈습니다. 상단 탭을 클릭하세요.")
         else:
             st.error(f"Failed to decode image for Candidate {candidate_id}")
     else:
