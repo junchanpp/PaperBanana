@@ -131,7 +131,8 @@ streamlit run demo.py
    - **Smart refine** (권장) — LLM이 finding 중심 markdown으로 압축 (~10초)
    - **Raw dump** — 전체 PDF 텍스트를 그대로 입력 (즉시, fallback용)
 5. **✨ Extract & Fill** 클릭 → Method/Caption 자동 채워짐
-6. 검토 후 **🚀 Generate Candidates** 클릭 → 1~5분 후 다이어그램 후보들 표시
+6. 검토 후 **🚀 Generate Candidates** 클릭 → 1~5분 후 다이어그램 후보들 표시 (기본 후보 3개)
+7. 각 candidate 카드의 **💬 피드백** / **🔍 업스케일** 버튼으로 *Feedback Chat* 탭(이미지+텍스트 반복 편집)·*Upscale* 탭(보존 업스케일 + 시각 diff 검증)으로 보낼 수 있음
 
 ### 옵션 B — CLI
 
