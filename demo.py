@@ -55,6 +55,7 @@ try:
     from utils import config
     from utils.paperviz_processor import PaperVizProcessor
     from utils.pdf_ingest import extract_paper, refine_for_diagram
+    from utils.image_utils import compute_preservation_diff
     print("DEBUG: Imported utils")
 
     model_config_data = {}
@@ -164,6 +165,15 @@ async def process_parallel_candidates(data_list, exp_mode="dev_planner_critic", 
         results.append(result_data)
     
     return results
+
+PRESERVE_UPSCALE_PROMPT = (
+    "Upscale this scientific diagram to a higher resolution. Reproduce it EXACTLY: "
+    "keep every text label, character, number, symbol, arrow, color, shape, and "
+    "spatial layout identical to the input. Do NOT add, remove, rephrase, translate, "
+    "or restyle anything. Only increase resolution and sharpness so the output is "
+    "pixel-faithful to the input, just larger and crisper."
+)
+
 
 async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9", image_size="2K", reference_image_bytes=None):
     """
