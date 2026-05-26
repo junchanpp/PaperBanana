@@ -441,7 +441,7 @@ def main():
     st.markdown("AI-powered scientific diagram generation and refinement")
     
     # Create tabs
-    tab1, tab2 = st.tabs(["📊 Generate Candidates", "✨ Refine Image"])
+    tab1, tab2, tab3 = st.tabs(["📊 Generate Candidates", "💬 Feedback Chat", "🔍 Upscale"])
     
     # ==================== TAB 1: Generate Candidates ====================
     with tab1:
@@ -916,118 +916,86 @@ The framework extends to statistical plots by adjusting the Visualizer and Criti
             except Exception as e:
                 st.error(f"Failed to create ZIP: {e}")
     
-    # ==================== TAB 2: Refine Image ====================
-    with tab2:
-        st.markdown("### Refine and upscale your diagram to high resolution (2K/4K)")
-        st.caption("Upload an image from the candidates or any diagram, describe changes, and generate a high-res version")
-        
-        # Sidebar for refinement settings
-        with st.sidebar:
-            st.title("✨ Refinement Settings")
-            
-            refine_resolution = st.selectbox(
-                "Target Resolution",
-                ["2K", "4K"],
-                index=0,
-                key="refine_resolution",
-                help="Higher resolution takes longer but produces better quality"
-            )
-            
-            refine_aspect_ratio = st.selectbox(
-                "Aspect Ratio",
-                ["21:9", "16:9", "3:2"],
-                index=0,
-                key="refine_aspect_ratio",
-                help="Aspect ratio for the refined image"
-            )
-        
-        st.divider()
-        
-        # Upload section
-        st.markdown("## 📤 Upload Image")
-        uploaded_file = st.file_uploader(
-            "Choose an image file",
-            type=["png", "jpg", "jpeg"],
-            help="Upload the diagram you want to refine"
-        )
-        
-        if uploaded_file is not None:
-            # Display uploaded image
-            uploaded_image = Image.open(uploaded_file)
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("### Original Image")
-                st.image(uploaded_image, use_container_width=True)
-            
-            with col2:
-                st.markdown("### Edit Instructions")
-                edit_prompt = st.text_area(
-                    "Describe the changes you want",
-                    height=200,
-                    placeholder="E.g., 'Change the color scheme to match academic paper style' or 'Make the text larger and bolder' or 'Keep everything the same but output in higher resolution'",
-                    help="Describe what you want to change or use 'Keep everything the same' for just upscaling",
-                    key="edit_prompt"
-                )
-                
-                if st.button("✨ Refine Image", type="primary", use_container_width=True):
-                    if not edit_prompt:
-                        st.error("Please provide edit instructions!")
-                    else:
-                        with st.spinner(f"Refining image to {refine_resolution} resolution... This may take a minute."):
-                            try:
-                                # Convert PIL image to bytes
-                                img_byte_arr = BytesIO()
-                                uploaded_image.save(img_byte_arr, format='JPEG')
-                                image_bytes = img_byte_arr.getvalue()
-                                
-                                # Call nanoviz API
-                                refined_bytes, message = asyncio.run(
-                                    refine_image_with_nanoviz(
-                                        image_bytes=image_bytes,
-                                        edit_prompt=edit_prompt,
-                                        aspect_ratio=refine_aspect_ratio,
-                                        image_size=refine_resolution
-                                    )
-                                )
-                                
-                                if refined_bytes:
-                                    st.session_state["refined_image"] = refined_bytes
-                                    st.session_state["refine_timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                    st.success(message)
-                                    st.rerun()
-                                else:
-                                    st.error(message)
-                            except Exception as e:
-                                st.error(f"Error during refinement: {e}")
-                                import traceback
-                                st.code(traceback.format_exc())
-            
-            # Display refined result if available
-            if "refined_image" in st.session_state:
+    # ==================== TAB 3: Upscale (preserve) ====================
+    with tab3:
+        st.markdown("### 🔍 Upscale (preserve) — 내용을 바꾸지 않고 고해상도화")
+        st.caption("결과를 받은 뒤, 원본과 달라진 픽셀을 빨간색으로 표시해 보존 여부를 검증합니다.")
+
+        up_col1, up_col2, up_col3 = st.columns(3)
+        with up_col1:
+            up_res = st.selectbox("Resolution", ["2K", "4K"], index=1, key="up_res")
+        with up_col2:
+            up_ratio = st.selectbox("Aspect Ratio", ["16:9", "21:9", "3:2", "1:1"], index=0, key="up_ratio")
+        with up_col3:
+            up_extra = st.text_input("추가 메모 (선택)", key="up_extra",
+                help="기본은 '내용 변경 없이 업스케일'입니다. 강조할 보존 포인트가 있으면 적으세요.")
+
+        # Adopt an image sent from the Generate tab (candidate action button)
+        if st.session_state.get("upscale_source_image") is not None:
+            st.session_state["up_active"] = st.session_state.pop("upscale_source_image")
+            st.session_state.pop("up_result", None)
+            st.toast("🔍 Candidate를 업스케일 입력으로 불러왔습니다.")
+
+        up_uploaded = st.file_uploader("또는 이미지 업로드", type=["png", "jpg", "jpeg"], key="up_uploader")
+        if up_uploaded is not None:
+            _img = Image.open(up_uploaded).convert("RGB")
+            _buf = BytesIO(); _img.save(_buf, format="JPEG", quality=95)
+            st.session_state["up_active"] = _buf.getvalue()
+
+        if "up_active" not in st.session_state:
+            st.info("Generate 탭에서 candidate의 '🔍 업스케일' 버튼을 누르거나, 위에서 이미지를 업로드하세요.")
+        else:
+            src_img = Image.open(BytesIO(st.session_state["up_active"])).convert("RGB")
+            st.image(src_img, caption=f"Source ({src_img.size[0]}×{src_img.size[1]})", width=360)
+
+            if st.button("🔍 Upscale (preserve)", type="primary", use_container_width=True):
+                prompt = PRESERVE_UPSCALE_PROMPT
+                if up_extra and up_extra.strip():
+                    prompt += " Additional note: " + up_extra.strip()
+                with st.spinner(f"Upscaling to {up_res} (preserving content)..."):
+                    out_bytes, msg = asyncio.run(refine_image_with_nanoviz(
+                        image_bytes=st.session_state["up_active"],
+                        edit_prompt=prompt,
+                        aspect_ratio=up_ratio,
+                        image_size=up_res,
+                    ))
+                if out_bytes:
+                    st.session_state["up_result"] = out_bytes
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+            if st.session_state.get("up_result"):
+                out_img = Image.open(BytesIO(st.session_state["up_result"])).convert("RGB")
+                diff = compute_preservation_diff(src_img, out_img)
+
                 st.divider()
-                st.markdown("## 🎨 Refined Result")
-                st.caption(f"Generated at: {st.session_state.get('refine_timestamp', 'N/A')} | Resolution: {refine_resolution}")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("### Before")
-                    st.image(uploaded_image, use_container_width=True)
-                
-                with col2:
-                    st.markdown(f"### After ({refine_resolution})")
-                    refined_image = Image.open(BytesIO(st.session_state["refined_image"]))
-                    st.image(refined_image, use_container_width=True)
-                    
-                    # Download button
-                    st.download_button(
-                        label=f"⬇️ Download {refine_resolution} Image",
-                        data=st.session_state["refined_image"],
-                        file_name=f"refined_{refine_resolution}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
+                st.markdown("#### 🧪 보존 검증")
+                st.caption("빨간색 = 원본과 달라진 픽셀. 텍스트/라벨이 빨갛게 칠해지면 내용이 변경된 것입니다.")
+                st.image(Image.open(BytesIO(diff["overlay_png_bytes"])), use_container_width=True,
+                         caption=f"변화 픽셀 {diff['changed_ratio'] * 100:.2f}%")
+
+                cmp1, cmp2 = st.columns(2)
+                with cmp1:
+                    st.markdown("**Before**")
+                    st.image(src_img, use_container_width=True)
+                with cmp2:
+                    st.markdown(f"**After ({up_res}, {out_img.size[0]}×{out_img.size[1]})**")
+                    st.image(out_img, use_container_width=True)
+
+                with st.expander("정량 지표 (보조)"):
+                    st.write(f"평균 절대 픽셀 차이(MAD): {diff['mad']:.2f} / 255")
+                    st.write(f"변화 픽셀 비율(>20/255): {diff['changed_ratio'] * 100:.2f}%")
+                    st.caption("MAD는 전체 평균이라 작은 텍스트 깨짐을 못 잡습니다. 위 빨간 오버레이가 주된 검증 신호입니다.")
+
+                st.download_button(
+                    label=f"⬇️ Download {up_res} Image",
+                    data=st.session_state["up_result"],
+                    file_name=f"upscaled_{up_res}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
 
 if __name__ == "__main__":
     main()
