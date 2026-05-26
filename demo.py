@@ -916,6 +916,88 @@ The framework extends to statistical plots by adjusting the Visualizer and Criti
             except Exception as e:
                 st.error(f"Failed to create ZIP: {e}")
     
+    # ==================== TAB 2: Feedback Chat ====================
+    with tab2:
+        st.markdown("### 💬 Feedback Chat — 텍스트 또는 이미지+텍스트로 반복 편집")
+        st.caption("Generate 탭에서 candidate를 보내거나 이미지를 업로드한 뒤, 채팅처럼 수정 지시를 주세요.")
+
+        # Adopt an image sent from the Generate tab (resets the conversation)
+        if st.session_state.get("chat_base_image") is not None:
+            st.session_state["chat_active_image"] = st.session_state.pop("chat_base_image")
+            st.session_state["chat_history"] = []
+            st.toast("💬 Candidate를 Feedback Chat으로 불러왔습니다.")
+
+        chat_uploaded = st.file_uploader("또는 이미지 업로드로 시작", type=["png", "jpg", "jpeg"], key="chat_uploader")
+        if chat_uploaded is not None and st.button("업로드한 이미지로 시작", key="chat_use_upload"):
+            _img = Image.open(chat_uploaded).convert("RGB")
+            _buf = BytesIO(); _img.save(_buf, format="JPEG", quality=95)
+            st.session_state["chat_active_image"] = _buf.getvalue()
+            st.session_state["chat_history"] = []
+            st.rerun()
+
+        if "chat_active_image" not in st.session_state:
+            st.info("Generate 탭에서 candidate의 '💬 피드백' 버튼을 누르거나, 위에서 이미지를 업로드하세요.")
+        else:
+            st.markdown("**현재 이미지 (편집은 이 이미지에 적용됩니다):**")
+            st.image(Image.open(BytesIO(st.session_state["chat_active_image"])), width=320)
+
+            st.session_state.setdefault("chat_history", [])
+            for i, turn in enumerate(st.session_state["chat_history"]):
+                with st.chat_message(turn["role"]):
+                    if turn["role"] == "user":
+                        if turn.get("text"):
+                            st.write(turn["text"])
+                        if turn.get("ref_image"):
+                            st.image(Image.open(BytesIO(turn["ref_image"])), width=160, caption="첨부 참조 이미지")
+                    else:
+                        if turn.get("image"):
+                            st.image(Image.open(BytesIO(turn["image"])), use_container_width=True)
+                            if st.button("↩️ 이 버전으로 되돌리기", key=f"revert_{i}"):
+                                st.session_state["chat_active_image"] = turn["image"]
+                                st.toast("되돌렸습니다. 다음 편집은 이 버전에 적용됩니다.")
+                                st.rerun()
+                        if turn.get("text"):
+                            st.caption(turn["text"])
+
+            user_msg = st.chat_input(
+                "수정할 내용을 입력하세요 (이미지 첨부 가능)",
+                accept_file=True,
+                file_type=["png", "jpg", "jpeg"],
+            )
+            if user_msg:
+                instruction = getattr(user_msg, "text", "") or ""
+                files = getattr(user_msg, "files", None) or []
+                ref_bytes = None
+                if files:
+                    _ref = Image.open(files[0]).convert("RGB")
+                    _rbuf = BytesIO(); _ref.save(_rbuf, format="JPEG", quality=95)
+                    ref_bytes = _rbuf.getvalue()
+
+                if not instruction.strip() and ref_bytes is None:
+                    st.warning("수정 지시를 입력하세요.")
+                else:
+                    st.session_state["chat_history"].append(
+                        {"role": "user", "text": instruction, "ref_image": ref_bytes, "image": None}
+                    )
+                    with st.spinner("편집 중..."):
+                        edited, msg = asyncio.run(refine_image_with_nanoviz(
+                            image_bytes=st.session_state["chat_active_image"],
+                            edit_prompt=instruction or "Apply the change shown in the reference image.",
+                            aspect_ratio=st.session_state.get("chat_aspect_ratio", "16:9"),
+                            image_size="2K",
+                            reference_image_bytes=ref_bytes,
+                        ))
+                    if edited:
+                        st.session_state["chat_active_image"] = edited
+                        st.session_state["chat_history"].append(
+                            {"role": "assistant", "text": msg, "ref_image": None, "image": edited}
+                        )
+                    else:
+                        st.session_state["chat_history"].append(
+                            {"role": "assistant", "text": msg, "ref_image": None, "image": None}
+                        )
+                    st.rerun()
+
     # ==================== TAB 3: Upscale (preserve) ====================
     with tab3:
         st.markdown("### 🔍 Upscale (preserve) — 내용을 바꾸지 않고 고해상도화")
