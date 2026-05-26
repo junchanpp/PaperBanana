@@ -106,7 +106,7 @@ def base64_to_image(b64_str):
     except Exception:
         return None
 
-def create_sample_inputs(method_content, caption, diagram_type="Pipeline", aspect_ratio="16:9", num_copies=10, max_critic_rounds=3):
+def create_sample_inputs(method_content, caption, diagram_type="Pipeline", aspect_ratio="16:9", num_copies=3, max_critic_rounds=2):
     """Create multiple copies of the input data for parallel processing."""
     base_input = {
         "filename": "demo_input",
@@ -165,21 +165,31 @@ async def process_parallel_candidates(data_list, exp_mode="dev_planner_critic", 
     
     return results
 
-async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9", image_size="2K"):
+async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9", image_size="2K", reference_image_bytes=None):
     """
     Refine an image using an Image Editing API.
     Supports OpenRouter (priority), Google API key, and Vertex AI ADC as fallback.
-    
+
     Args:
-        image_bytes: Image data in bytes
+        image_bytes: Image data in bytes (the current image being edited)
         edit_prompt: Text description of desired changes
         aspect_ratio: Output aspect ratio (21:9, 16:9, 3:2)
         image_size: Output resolution (2K or 4K)
-    
+        reference_image_bytes: Optional second image (bytes) used only as a reference
+
     Returns:
         Tuple of (edited_image_bytes, success_message)
     """
     image_model = get_config_val("defaults", "image_gen_model_name", "IMAGE_GEN_MODEL_NAME", "")
+
+    # When a reference image is attached, tell the model which image is which.
+    if reference_image_bytes is not None:
+        edit_prompt = (
+            "You are given two images. The FIRST image is the current diagram to edit. "
+            "The SECOND image is a reference provided by the user. Apply the following "
+            "instruction to the first image, using the second only as a reference. "
+            "Instruction: " + (edit_prompt or "Match the reference.")
+        )
 
     # Encode image as base64 data URL for OpenRouter
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
@@ -196,8 +206,11 @@ async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9
         try:
             contents = [
                 {"type": "image", "data": image_b64, "mime_type": "image/jpeg"},
-                {"type": "text", "text": edit_prompt},
             ]
+            if reference_image_bytes is not None:
+                ref_b64 = base64.b64encode(reference_image_bytes).decode("utf-8")
+                contents.append({"type": "image", "data": ref_b64, "mime_type": "image/jpeg"})
+            contents.append({"type": "text", "text": edit_prompt})
             config = {
                 "system_prompt": "",
                 "temperature": 1.0,
@@ -242,6 +255,10 @@ async def refine_image_with_nanoviz(image_bytes, edit_prompt, aspect_ratio="21:9
             types.Part.from_text(text=edit_prompt),
             types.Part.from_bytes(mime_type="image/jpeg", data=image_bytes),
         ]
+        if reference_image_bytes is not None:
+            contents.append(
+                types.Part.from_bytes(mime_type="image/jpeg", data=reference_image_bytes)
+            )
         gen_config = types.GenerateContentConfig(
             temperature=1.0,
             max_output_tokens=8192,
@@ -450,9 +467,9 @@ def main():
                 "Number of Candidates",
                 min_value=1,
                 max_value=20,
-                value=10,
+                value=3,
                 key="tab1_num_candidates",
-                help="How many parallel candidates to generate"
+                help="How many parallel candidates to generate (each candidate runs the full pipeline, so cost scales linearly)"
             )
             
             aspect_ratio = st.selectbox(
@@ -466,9 +483,9 @@ def main():
                 "Max Critic Rounds",
                 min_value=1,
                 max_value=5,
-                value=3,
+                value=2,
                 key="tab1_max_critic_rounds",
-                help="Maximum number of critic refinement iterations"
+                help="Maximum number of critic refinement iterations (each round adds one image generation per candidate)"
             )
             
             default_model = get_config_val("defaults", "main_model_name", "MAIN_MODEL_NAME", "gemini-3.1-pro-preview")
