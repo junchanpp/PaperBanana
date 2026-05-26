@@ -18,6 +18,7 @@ Image utility functions for processing and converting images
 
 import base64
 import io
+import numpy as np
 from PIL import Image
 
 
@@ -44,3 +45,49 @@ def convert_png_b64_to_jpg_b64(png_b64_str: str) -> str:
         print(f"❌ Error converting image: {e}")
         print(f"   Input preview: {png_b64_str[:100] if png_b64_str else 'None'}")
         return None
+
+
+def compute_preservation_diff(original, upscaled, threshold: int = 20) -> dict:
+    """Compare an upscaled image against its original to visualize what changed.
+
+    The upscaled image is downscaled back to the original size, then compared
+    pixel-by-pixel. Pixels whose max per-channel difference exceeds `threshold`
+    (0-255) are considered "changed" and tinted red in the overlay.
+
+    Args:
+        original: PIL.Image of the source.
+        upscaled: PIL.Image of the model output (any size).
+        threshold: per-pixel max-channel diff above which a pixel counts as changed.
+
+    Returns:
+        dict with:
+          mad: float, mean absolute pixel difference (0-255).
+          changed_ratio: float, fraction of pixels exceeding threshold (0-1).
+          overlay_png_bytes: bytes, original-size PNG with changed pixels tinted red.
+    """
+    orig = original.convert("RGB")
+    up = upscaled.convert("RGB")
+    if up.size != orig.size:
+        up = up.resize(orig.size, Image.LANCZOS)
+
+    a = np.asarray(orig, dtype=np.int16)
+    b = np.asarray(up, dtype=np.int16)
+    abs_diff = np.abs(a - b)
+    mad = float(abs_diff.mean())
+    per_pixel_max = abs_diff.max(axis=2)
+    mask = per_pixel_max > threshold
+    changed_ratio = float(mask.mean())
+
+    overlay = np.asarray(orig, dtype=np.uint8).copy()
+    red = np.array([255, 0, 0], dtype=np.float32)
+    if mask.any():
+        blended = 0.5 * overlay[mask].astype(np.float32) + 0.5 * red
+        overlay[mask] = blended.astype(np.uint8)
+
+    buf = io.BytesIO()
+    Image.fromarray(overlay).save(buf, format="PNG")
+    return {
+        "mad": mad,
+        "changed_ratio": changed_ratio,
+        "overlay_png_bytes": buf.getvalue(),
+    }
