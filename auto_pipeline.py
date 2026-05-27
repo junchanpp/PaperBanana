@@ -148,8 +148,8 @@ def main() -> None:
     parser.add_argument("pdf", help="Path to the source PDF.")
     parser.add_argument("--figure", type=int, default=None,
                         help="Target figure number. Default: auto-pick overview/schematic figure.")
-    parser.add_argument("--candidates", type=int, default=4,
-                        help="Number of parallel diagram candidates (default 4).")
+    parser.add_argument("--candidates", type=int, default=3,
+                        help="Number of parallel diagram candidates (default 3).")
     parser.add_argument("--critic-rounds", type=int, default=2,
                         help="Max critic refinement rounds (default 2).")
     parser.add_argument("--exp-mode", default="demo_full",
